@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Electricity Usage Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <!-- Header -->
+    <header class="bg-gradient-to-r from-blue-600 to-blue-800 shadow-lg">
+        <div class="max-w-7xl mx-auto px-4 py-6">
+            <h1 class="text-4xl font-bold">Electricity Usage Dashboard</h1>
+            <p class="text-blue-100 mt-1">Real-time energy consumption analytics</p>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-7xl mx-auto px-4 py-8">
+        <!-- Loading State -->
+        <div id="loadingSpinner" class="flex justify-center items-center py-12">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+        </div>
+
+        <!-- Dashboard Content (Hidden until loaded) -->
+        <div id="dashboardContent" class="hidden">
+            <!-- Stat Cards -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <div class="bg-gray-800 rounded-lg shadow-lg p-6 border-l-4 border-blue-500">
+                    <p class="text-gray-400 text-sm font-semibold">TOTAL RESIDENTIAL USERS</p>
+                    <p id="residentialUsers" class="text-4xl font-bold mt-2">0</p>
+                </div>
+                <div class="bg-gray-800 rounded-lg shadow-lg p-6 border-l-4 border-green-500">
+                    <p class="text-gray-400 text-sm font-semibold">TOTAL POWER CONSUMPTION (kWh)</p>
+                    <p id="totalConsumption" class="text-4xl font-bold mt-2">0</p>
+                </div>
+            </div>
+
+            <!-- Charts Section -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+                <!-- Bar Chart -->
+                <div class="bg-gray-800 rounded-lg shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4">Energy Consumption by Sector</h2>
+                    <canvas id="barChart"></canvas>
+                </div>
+
+                <!-- Doughnut Chart -->
+                <div class="bg-gray-800 rounded-lg shadow-lg p-6">
+                    <h2 class="text-xl font-bold mb-4">User Distribution</h2>
+                    <canvas id="doughnutChart"></canvas>
+                </div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="bg-gray-800 rounded-lg shadow-lg p-6 overflow-x-auto">
+                <h2 class="text-xl font-bold mb-4">Detailed Statistics</h2>
+                <table class="w-full text-left text-sm">
+                    <thead class="bg-gray-700 text-gray-300">
+                        <tr>
+                            <th class="px-4 py-3">Metric</th>
+                            <th class="px-4 py-3">Value</th>
+                        </tr>
+                    </thead>
+                    <tbody id="statsTable" class="divide-y divide-gray-700">
+                        <!-- Table rows populated by JavaScript -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Error State -->
+        <div id="errorContainer" class="hidden bg-red-900 border border-red-700 rounded-lg p-6 text-red-100">
+            <p id="errorMessage"></p>
+        </div>
+    </main>
+
+    <script>
+        // Chart instances
+        let barChartInstance = null;
+        let doughnutChartInstance = null;
+
+        /**
+         * Fetch both JSON files simultaneously using Promise.all
+         */
+        async function loadDashboardData() {
+            try {
+                const [usersResponse, usageResponse] = await Promise.all([
+                    fetch('electricity_users_en.json'),
+                    fetch('electricity_usages_en.json')
+                ]);
+
+                if (!usersResponse.ok || !usageResponse.ok) {
+                    throw new Error('Failed to fetch data files');
+                }
+
+                const usersData = await usersResponse.json();
+                const usageData = await usageResponse.json();
+
+                // Extract Sheet1 array from usage data
+                const usageRecords = usageData.Sheet1 || [];
+
+                renderDashboard(usersData, usageRecords);
+            } catch (error) {
+                showError(`Error loading dashboard: ${error.message}`);
+                console.error(error);
+            }
+        }
+
+        /**
+         * Render all dashboard components
+         */
+        function renderDashboard(usersData, usageRecords) {
+            document.getElementById('loadingSpinner').classList.add('hidden');
+            document.getElementById('dashboardContent').classList.remove('hidden');
+
+            // Update stat cards
+            updateStatCards(usersData, usageRecords);
+
+            // Render charts
+            renderBarChart(usageRecords);
+            renderDoughnutChart(usersData);
+
+            // Populate data table
+            populateStatsTable(usersData, usageRecords);
+        }
+
+        /**
+         * Update stat cards with summary data
+         */
+        function updateStatCards(usersData, usageRecords) {
+            const residentialUsers = usersData.residential_count || 0;
+            const totalConsumption = usageRecords.reduce((sum, record) => {
+                return sum + (record.residential_kwh || 0) + 
+                       (record.small_business_kwh || 0) + 
+                       (record.other_kwh || 0);
+            }, 0);
+
+            document.getElementById('residentialUsers').textContent = 
+                residentialUsers.toLocaleString();
+            document.getElementById('totalConsumption').textContent = 
+                totalConsumption.toLocaleString();
+        }
+
+        /**
+         * Render bar chart for energy consumption by sector
+         */
+        function renderBarChart(usageRecords) {
+            const ctx = document.getElementById('barChart').getContext('2d');
+            
+            const residential = usageRecords.reduce((sum, r) => sum + (r.residential_kwh || 0), 0);
+            const smallBusiness = usageRecords.reduce((sum, r) => sum + (r.small_business_kwh || 0), 0);
+            const other = usageRecords.reduce((sum, r) => sum + (r.other_kwh || 0), 0);
+
+            if (barChartInstance) barChartInstance.destroy();
+
+            barChartInstance = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Residential', 'Small Business', 'Other'],
+                    datasets: [{
+                        label: 'Energy Consumption (kWh)',
+                        data: [residential, smallBusiness, other],
+                        backgroundColor: ['#3b82f6', '#10b981', '#f59e0b'],
+                        borderColor: ['#1e40af', '#047857', '#d97706'],
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { labels: { color: '#d1d5db' } }
+                    },
+                    scales: {
+                        y: { ticks: { color: '#d1d5db' }, grid: { color: '#4b5563' } },
+                        x: { ticks: { color: '#d1d5db' }, grid: { color: '#4b5563' } }
+                    }
+                }
+            });
+        }
+
+        /**
+         * Render doughnut chart for user distribution
+         */
+        function renderDoughnutChart(usersData) {
+            const ctx = document.getElementById('doughnutChart').getContext('2d');
+            
+            const residential = usersData.residential_count || 0;
+            const smallBusiness = usersData.small_business_count || 0;
+            const other = usersData.ev_charging_count || 0;
+
+            if (doughnutChartInstance) doughnutChartInstance.destroy();
+
+            doughnutChartInstance = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Residential', 'Small Business', 'EV Charging'],
+                    datasets: [{
+                        data: [residential, smallBusiness, other],
+                        backgroundColor: ['#3b82f6', '#10b981', '#ec4899'],
+                        borderColor: '#1f2937',
+                        borderWidth: 2
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    plugins: {
+                        legend: { labels: { color: '#d1d5db' }, position: 'bottom' }
+                    }
+                }
+            });
+        }
+
+        /**
+         * Populate statistics table
+         */
+        function populateStatsTable(usersData, usageRecords) {
+            const tbody = document.getElementById('statsTable');
+            const stats = [
+                { metric: 'Residential Users', value: usersData.residential_count || 0 },
+                { metric: 'Small Business Users', value: usersData.small_business_count || 0 },
+                { metric: 'EV Charging Points', value: usersData.ev_charging_count || 0 },
+                { metric: 'Total Residential kWh', value: (usageRecords.reduce((sum, r) => sum + (r.residential_kwh || 0), 0)).toLocaleString() },
+                { metric: 'Total Small Business kWh', value: (usageRecords.reduce((sum, r) => sum + (r.small_business_kwh || 0), 0)).toLocaleString() }
+            ];
+
+            tbody.innerHTML = stats.map(stat => `
+                <tr class="hover:bg-gray-700 transition">
+                    <td class="px-4 py-3 font-semibold">${stat.metric}</td>
+                    <td class="px-4 py-3 text-blue-400">${stat.value}</td>
+                </tr>
+            `).join('');
+        }
+
+        /**
+         * Display error message
+         */
+        function showError(message) {
+            document.getElementById('loadingSpinner').classList.add('hidden');
+            document.getElementById('errorContainer').classList.remove('hidden');
+            document.getElementById('errorMessage').textContent = message;
+        }
+
+        // Initialize dashboard on page load
+        document.addEventListener('DOMContentLoaded', loadDashboardData);
+    </script>
+</body>
+</html>
